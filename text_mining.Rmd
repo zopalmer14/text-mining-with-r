@@ -1,0 +1,74 @@
+---
+title: "Text Mining with R - A Tidy Approach"
+subtitle: "Applied Examples"
+author: "Zach Palmer"
+date: "2025-04-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Set Up & Load Data
+
+```{r load-packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidytext)
+library(igraph)
+library(ggraph)
+library(gutenbergr)
+library(stringr)
+```
+
+```{r search-gutenberg}
+#gutenberg_metadata %>%
+#  filter(str_detect(title, regex("The Skull", ignore_case=TRUE)))
+```
+
+```{r load-data}
+# all text corpora downloaded from the Gutenberg Project
+
+# The Time Machine, The War of the Worlds, The Invisible Man, and 
+# The Door of the Wall, and Other Stories respectively 
+hgwells = gutenberg_download(c(35, 36, 5230, 456), meta_fields = "title")
+
+# A Journey to the Centre of the Earth and The Mysterious Island
+jv = gutenberg_download(c(18857, 8993), meta_fields = "title")
+
+# Second Variety, The Piper in the Woods, The Variable Man, The Defenders, 
+# Mr. Spaceship, and The Skull respectively 
+pkd = gutenberg_download(c(32032, 32832, 32154, 28767, 32522, 30255), meta_fields = "title")
+```
+
+```{r tidy-data, warning=FALSE, message=FALSE}
+tidy_hgw = hgwells %>%
+  select(-gutenberg_id) %>%
+  mutate(author = "H.G. Wells") %>%
+  group_by(title) %>%
+  mutate(linenumber = row_number()) %>%
+  ungroup() %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_jv = jv %>%
+  select(-gutenberg_id) %>%
+  mutate(author = "Jules Verne") %>%
+  group_by(title) %>%
+  mutate(linenumber = row_number()) %>%
+  ungroup() %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+tidy_pkd = pkd %>%
+  select(-gutenberg_id) %>%
+  mutate(author = "Philip K. Dick") %>%
+  group_by(title) %>%
+  mutate(linenumber = row_number()) %>%
+  ungroup() %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+```
+
+
+
