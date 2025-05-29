@@ -88,11 +88,12 @@ tidy_books %>%
   mutate(prop = n / sum(n)) %>%
   select(-n) %>%
   slice_max(prop, n = 10) %>%
-  mutate(word = reorder(word, prop)) %>%
+  mutate(word = reorder_within(word, prop, author)) %>%
   ungroup() %>%
   ggplot(aes(prop, word, fill = author)) +
   geom_col(show.legend = FALSE) +
   facet_wrap(~author, ncol = 2, scales = "free") + 
+  scale_y_reordered() +
   theme_bw() +
   labs(title = "Most Common Words Across Science Fiction Authors", x = "Frequency", y = NULL)
 ```
@@ -197,6 +198,48 @@ pkd_sentiment %>%
   geom_col(show.legend = FALSE) +
   facet_wrap(~title, ncol = 2, scales = "free_x") +
   labs(title = "Text Sentiment Across Philip K. Dick Stories",
+       x = "Index", y = "Net Word Sentiment") +
+  theme_bw()
+```
+
+### Comparing Sentiment Dictionaries
+
+```{r}
+mysterious_island = tidy_books %>%
+  filter(title == "The Mysterious Island")
+```
+
+```{r}
+afinn = mysterious_island %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+  group_by(index = linenumber %/% 80) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing = mysterious_island %>% 
+  inner_join(get_sentiments("bing")) %>%
+  mutate(method = "Bing et al.")
+
+nrc = mysterious_island %>% 
+  inner_join(get_sentiments("nrc") %>% filter(sentiment %in% c("positive", "negative"))) %>%
+  mutate(method = "NRC")
+
+bing_and_nrc = bing %>% 
+  bind_rows(nrc) %>%
+  count(method, index = linenumber %/% 80, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+
+afinn_bing_and_nrc = afinn %>%
+  bind_rows(bing_and_nrc)
+```
+
+```{r, fig.width=12, fig.height=9}
+afinn_bing_and_nrc %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y") +
+  labs(title = "Comparing Text Sentiment Dictionary Results for The Mysterious Island by Jules Verne",
        x = "Index", y = "Net Word Sentiment") +
   theme_bw()
 ```
