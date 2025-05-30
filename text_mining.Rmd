@@ -19,6 +19,8 @@ library(igraph)
 library(ggraph)
 library(gutenbergr)
 library(stringr)
+library(topicmodels)
+library(tm)
 ```
 
 ```{r search-gutenberg}
@@ -271,6 +273,154 @@ visualize_bigrams = function(bigrams) {
     geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
     theme_void()
 }
+```
+
+### Topic Modeling
+
+```{r}
+data("AssociatedPress")
+AssociatedPress
+```
+
+```{r}
+ap_lda = LDA(AssociatedPress, k = 2, control = list(seed = 1234))
+ap_lda
+```
+
+#### Term-Topic Probabilities
+
+```{r}
+ap_topics = tidy(ap_lda, matrix = "beta")
+ap_topics
+```
+
+```{r}
+ap_top_terms = ap_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ap_top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered() +
+  theme_bw()
+```
+
+```{r}
+beta_wide = ap_topics %>%
+  mutate(topic = paste0("topic", topic)) %>%
+  pivot_wider(names_from = topic, values_from = beta) %>% 
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+
+beta_wide
+```
+
+```{r, fig.width=12, fig.height=8}
+beta_wide %>%
+  arrange(desc(abs(log_ratio))) %>%
+  head(20) %>%
+  mutate(term = reorder(term, log_ratio)) %>%
+  ggplot(aes(log_ratio, term)) +
+  geom_col(fill = "dodgerblue") +
+  theme_bw() + 
+  theme(title = element_text(size = 14), 
+        axis.title = element_text(size = 14), 
+        axis.text = element_text(size = 12)) +
+  labs(title = "Terms with the Greatest Difference in β Between Topic 2 and Topic 1",
+       x = "Log2 Ratio of β in Topic 2 / Topic 1")
+```
+
+### Example: Use LDA on Novels from Different Authors
+
+```{r}
+# Jules Verne, HG Wells, Jane Austen, Charles Dickens
+titles = c("A Journey to the Centre of the Earth", 
+            "The War of the Worlds",
+            "Sense and Sensibility", 
+            "Great Expectations")
+```
+
+```{r}
+books = gutenberg_works(title %in% titles) %>%
+  gutenberg_download(meta_fields = "title")
+```
+
+```{r}
+books %>% distinct(title)
+```
+
+```{r}
+# divide into documents, each representing one chapter
+by_chapter = books %>%
+  group_by(title) %>%
+  mutate(chapter = cumsum(str_detect(
+    text, regex("^chapter ", ignore_case = TRUE)
+  ))) %>%
+  ungroup() %>%
+  filter(chapter > 0) %>%
+  unite(document, title, chapter)
+
+by_chapter
+```
+
+```{r}
+# split into words, then find document-word counts
+by_chapter_word = by_chapter %>%
+  unnest_tokens(word, text)
+
+word_counts = by_chapter_word %>%
+  anti_join(stop_words) %>%
+  count(document, word, sort = TRUE)
+
+word_counts
+```
+
+#### Apply LDA on Chapters
+
+```{r}
+chapters_dtm = word_counts %>%
+  cast_dtm(document, word, n)
+
+chapters_dtm
+```
+
+```{r}
+chapters_lda = LDA(chapters_dtm, k = 4, control = list(seed = 1234))
+chapters_lda
+```
+
+```{r}
+chapter_topics = tidy(chapters_lda, matrix = "beta")
+chapter_topics
+```
+
+```{r}
+top_terms = chapter_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 5) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+top_terms
+```
+
+```{r, fig.width=15, fig.height=9}
+top_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~topic, scales = "free") +
+  scale_y_reordered() +
+  theme_bw() + 
+  theme(title = element_text(size = 14), 
+        axis.title = element_text(size = 14), 
+        axis.text = element_text(size = 12)) +
+  labs(title = "Most Frequently Generated Terms From Each Topic")
 ```
 
 
