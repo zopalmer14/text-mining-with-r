@@ -1,0 +1,348 @@
+---
+title: "Department of Commerce Metadata Analysis"
+subtitle: "Text Mining & Topic Modeling"
+author: "Zach Palmer"
+date: "2025-06-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set Up & Load Data
+
+```{r load-packages, message=FALSE, warning=FALSE}
+library(igraph)
+library(ggraph)
+library(jsonlite)
+library(stringr)
+library(tidyverse)
+library(tidytext)
+library(topicmodels)
+library(tm)
+library(widyr)
+```
+
+```{r}
+metadata = fromJSON("https://www.commerce.gov/sites/default/files/data.json")
+names(metadata$dataset)
+```
+
+## Tidying Data
+
+### Extract Dataset title, description, and keywords
+
+```{r}
+doc_title = tibble(id = metadata$dataset$id, title = metadata$dataset$title)
+
+doc_title %>% 
+  head(5)
+```
+
+```{r}
+doc_desc = tibble(id = metadata$dataset$id, desc = metadata$dataset$description)
+
+doc_desc %>% 
+  select(desc) %>% 
+  sample_n(5)
+```
+
+```{r}
+doc_keywords = tibble(id = metadata$dataset$id, keyword = metadata$dataset$keyword) %>%
+  unnest(keyword) %>%
+  mutate(keyword = toupper(keyword))
+
+doc_keywords %>% 
+  head(10)
+```
+
+### Tokenize Dataset title and description 
+
+```{r}
+doc_title = doc_title %>% 
+  unnest_tokens(word, title) %>% 
+  anti_join(stop_words)
+
+doc_desc = doc_desc %>% 
+  unnest_tokens(word, desc) %>% 
+  anti_join(stop_words)
+```
+
+## Simple Exploration
+
+```{r, fig.height=6, fig.width=9}
+doc_title %>%
+  count(word) %>%
+  slice_max(n, n = 10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col(fill = "dodgerblue") +
+  theme_bw() +
+  labs(title = "Most Common Words in Commerce Metadata Titles", x = "Count", y = "")
+```
+
+```{r, fig.height=6, fig.width=9}
+doc_desc %>%
+  count(word) %>%
+  slice_max(n, n = 10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col(fill = "dodgerblue") +
+  theme_bw() +
+  labs(title = "Most Common Words in Commerce Metadata Descriptions", x = "Count", y = "")
+```
+
+```{r, fig.height=6, fig.width=9}
+doc_keywords %>%
+  count(keyword) %>%
+  slice_max(n, n = 10) %>%
+  mutate(keyword = reorder(keyword, n)) %>%
+  ggplot(aes(n, keyword)) +
+  geom_col(fill = "dodgerblue") +
+  theme_bw() +
+  labs(title = "Most Prevalent Keywords in Commerce Metadata", x = "Count", y = "")
+```
+
+## Word Co-ocurrences & Correlations
+
+```{r}
+title_word_pairs = doc_title %>% 
+  pairwise_count(word, id, sort = TRUE, upper = FALSE)
+
+title_word_pairs %>%
+  head(10)
+```
+
+```{r}
+desc_word_pairs = doc_desc %>% 
+  pairwise_count(word, id, sort = TRUE, upper = FALSE)
+
+desc_word_pairs %>%
+  head(10)
+```
+
+```{r}
+keyword_word_pairs = doc_keywords %>% 
+  pairwise_count(keyword, id, sort = TRUE, upper = FALSE)
+
+keyword_word_pairs %>%
+  head(10)
+```
+
+```{r, fig.height=8, fig.width=12}
+set.seed(1234)
+title_word_pairs %>%
+  filter(n >= 95) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "cyan4") +
+  geom_node_point(size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, 
+                 point.padding = unit(1, "lines")) +
+  theme_void()
+```
+
+```{r, fig.height=8, fig.width=12}
+set.seed(1234)
+desc_word_pairs %>%
+  filter(n >= 425) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "dodgerblue") +
+  geom_node_point(size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, 
+                 point.padding = unit(1, "lines")) +
+  theme_void()
+```
+
+```{r, fig.height=8, fig.width=12}
+set.seed(1234)
+keyword_word_pairs %>%
+  filter(n >= 10) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n), edge_colour = "royalblue") +
+  geom_node_point(size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE, 
+                 point.padding = unit(1, "lines")) +
+  theme_void()
+```
+
+```{r}
+keyword_cors = doc_keywords %>% 
+  group_by(keyword) %>%
+  filter(n() > 10) %>%
+  pairwise_cor(keyword, id, sort = TRUE, upper = FALSE)
+
+keyword_cors %>%
+  head(10)
+```
+
+```{r}
+set.seed(1234)
+keyword_cors %>%
+  filter(correlation > .99) %>%
+  graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = correlation, edge_width = correlation), edge_colour = "royalblue") +
+  geom_node_point(size = 5) +
+  geom_node_text(aes(label = name), repel = TRUE,
+                 point.padding = unit(1, "lines")) +
+  theme_void()
+```
+
+**Finding:** These keywords (among if not the most prevalent keywords) always occur together and, in a sense, almost make their inclusion together redundant as they can be consolidated to fewer values.
+
+## Investigating the tf-idf of Words in Description Fields
+
+```{r}
+desc_tf_idf = doc_desc %>% 
+  count(id, word, sort = TRUE) %>%
+  bind_tf_idf(word, id, n)
+
+desc_tf_idf %>%
+  arrange(desc(tf_idf))
+```
+
+```{r}
+desc_tf_idf = full_join(desc_tf_idf, doc_keywords, by = "id")
+```
+
+### Connecting Description Fields to Keywords to Identify Important Words by Keyword
+
+```{r, fig.height=8, fig.width=12}
+desc_tf_idf %>% 
+  filter(!near(tf, 1)) %>%
+  filter(keyword %in% c("NTIA", "CENSUS", 
+                        "FCC", "USPTO",
+                        "API", "XML")) %>%
+  arrange(desc(tf_idf)) %>%
+  group_by(keyword) %>%
+  distinct(word, keyword, .keep_all = TRUE) %>%
+  slice_max(tf_idf, n = 15, with_ties = FALSE) %>% 
+  ungroup() %>%
+  mutate(word = reorder_within(word, tf_idf, keyword)) %>%
+  ggplot(aes(tf_idf, word, fill = keyword)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~keyword, ncol = 3, scales = "free") +
+  scale_y_reordered() +
+  theme_bw() +
+  labs(title = "Highest tf-idf words in Commerce metadata description fields",
+       caption = "Commerce metadata from https://commerce.gov/data.json",
+       x = "tf-idf", y = NULL)
+```
+
+## Topic Modeling
+
+### Create LDA Model
+
+#### Clean and Count Words in Description Fields
+
+```{r}
+my_stop_words = stop_words %>%
+  bind_rows(tibble(word = c("nbsp", "amp", "gt", "lt",
+                            "timesnewromanpsmt", "font",
+                            "td", "li", "br", "tr", "quot",
+                            "st", "img", "src", "strong",
+                            "http", "file", "files",
+                            as.character(1:12)), 
+                   lexicon = rep("custom", 30)))
+```
+
+```{r}
+word_counts = doc_desc %>%
+  anti_join(my_stop_words) %>%
+  count(id, word, sort = TRUE)
+
+word_counts %>%
+  head(10)
+```
+
+#### Cast to Document-Term Matrix then Fit Model
+
+```{r}
+desc_dtm = word_counts %>%
+  cast_dtm(id, word, n)
+
+desc_dtm
+```
+
+```{r}
+desc_lda = LDA(desc_dtm, k = 24, control = list(seed = 1234))
+desc_lda
+```
+
+### Interpret LDA Model
+
+#### Investigate Word-Topic Associations
+
+```{r}
+tidy_lda = tidy(desc_lda)
+tidy_lda %>%
+  head(10)
+```
+
+```{r, fig.height=15, fig.width=10}
+tidy_lda %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = as.factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, ncol = 4, scales = "free") +
+  scale_y_reordered() +
+  theme_bw() +
+  labs(title = "Top 10 terms in each LDA Topic",
+       x = expression(beta), y = NULL)
+```
+
+#### Investigate Topic-Document (Description) Associations
+
+```{r}
+lda_gamma = tidy(desc_lda, matrix = "gamma")
+lda_gamma %>%
+  arrange(document) %>%
+  head(10)
+```
+
+```{r, fig.height=6, fig.width=9}
+lda_gamma %>%
+  ggplot(aes(gamma)) +
+  geom_histogram(fill = "royalblue", alpha = 0.8) +
+  scale_y_log10() +
+  theme_bw() +
+  theme(title = element_text(size = 14), 
+        axis.title.x = element_text(size = 20)) +
+  labs(title = "Distribution of Probabilities for All Topics",
+       y = "Number of Documents", x = expression(gamma))
+```
+
+```{r, fig.height=15, fig.width=10}
+lda_gamma %>%
+  ggplot(aes(gamma, fill = as.factor(topic))) +
+  geom_histogram(alpha = 0.8, show.legend = FALSE) +
+  scale_y_log10() +
+  facet_wrap(~topic, ncol = 4) +
+  theme_bw() +
+  labs(title = "Distribution of Probabilities for Each Topic",
+       y = "Number of Documents", x = expression(gamma))
+```
+
+### Connect Topic Modeling Back to Keywords
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
